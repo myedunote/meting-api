@@ -38,6 +38,25 @@ export const audioDownloadHandler = async (c) => {
         ? store.getActiveCookieForQuality(server, quality, false)
         : store.getActiveCookie(server)
     const cookie = storedCookie?.cookie || ''
+
+    // 汽水取流依赖外部签名服务（X-Medusa/X-Helios），失败原因容易和
+    // Cookie 问题混淆，先做区分诊断再调用，给出可行动的提示。
+    if (server === 'qishui') {
+        const hasActiveCookie = store.getCookies(server)
+            .some(account => account.isActive && account.isValid !== false)
+        if (!hasActiveCookie) {
+            return c.json({ success: false, error: '汽水需要先在管理后台扫码登录并保存 Cookie' }, 400)
+        }
+        if (!resolveQishuiSignerUrl(store.getQishuiSignerUrl())) {
+            return c.json({
+                success: false,
+                error: '汽水取流需要签名服务（X-Medusa/X-Helios）：本部署未配置 QISHUI_SIGNER_URL。'
+                    + '歌单与歌词可直接使用，但获取播放地址必须在管理后台配置签名服务地址，'
+                    + '或设置环境变量 QISHUI_SIGNER_URL 后重启',
+            }, 503)
+        }
+    }
+
     const signerUrl = server === 'qishui' ? resolveQishuiSignerUrl(store.getQishuiSignerUrl()) : ''
 
     let payload
@@ -51,7 +70,16 @@ export const audioDownloadHandler = async (c) => {
     }
 
     const url = String(payload?.url || '')
-    if (!url) return c.json({ success: false, error: 'no url（可能需要先在后台保存可用 Cookie）' }, 403)
+    if (!url) {
+        if (server === 'qishui') {
+            return c.json({
+                success: false,
+                error: '汽水签名服务未返回播放地址：请检查 QISHUI_SIGNER_URL 指向的服务是否可用，'
+                    + '以及 Cookie 是否仍具备该音质的播放权限',
+            }, 503)
+        }
+        return c.json({ success: false, error: 'no url（可能需要先在后台保存可用 Cookie）' }, 403)
+    }
     if (url.startsWith('@')) return c.json({ success: false, error: url.slice(1) || 'no url' }, 403)
 
     try {

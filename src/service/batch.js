@@ -111,6 +111,7 @@ tbody tr:hover { background: var(--card-2); }
       </div>
     </div>
     <div class="hint" id="parseHint">Token 只保存在本浏览器 localStorage。QQ/酷狗/汽水解析 VIP 音质需要后台已保存对应平台 Cookie。</div>
+    <div class="hint" id="qishuiHint" hidden>汽水提示：歌单与歌词可直接解析；获取播放地址需要部署签名服务（后台设置或环境变量 <b>QISHUI_SIGNER_URL</b>），未配置时下载会失败并给出具体原因。</div>
   </div>
 
   <div class="card" id="trackBox" hidden>
@@ -213,7 +214,10 @@ const formatBytes = (bytes) => {
 };
 
 /* ============================ 歌单解析 ============================ */
-$('server').addEventListener('change', () => fillQuality());
+$('server').addEventListener('change', () => { fillQuality(); updateServerHint(); });
+const updateServerHint = () => {
+  $('qishuiHint').hidden = $('server').value !== 'qishui';
+};
 const fillQuality = () => {
   const select = $('quality');
   const previous = select.value;
@@ -697,10 +701,24 @@ const runDownload = async () => {
   $('stopBtn').hidden = false;
   logLine('开始下载 ' + selected.length + ' 首（并发 ' + $('concurrency').value + '）');
   const queue = [...selected];
+  // 连续多首同一原因失败（如缺 Cookie/缺签名服务）时自动暂停，
+  // 避免大歌单全部打红；修复配置后可用「仅选失败」重试。
+  let consecutiveFailures = 0;
+  let lastFailureMessage = '';
   const workers = Array.from({ length: Math.min(Number($('concurrency').value), queue.length) }, async () => {
     while (queue.length && !state.abort.signal.aborted) {
       const track = queue.shift();
       if (track.checked && track.status !== 'done') await processTrack(track);
+      if (track.status === 'err') {
+        consecutiveFailures = track.message === lastFailureMessage ? consecutiveFailures + 1 : 1;
+        lastFailureMessage = track.message;
+        if (consecutiveFailures >= 3 && queue.length) {
+          state.abort.abort();
+          logLine('连续 ' + consecutiveFailures + ' 首失败（' + track.message + '），已自动暂停。修复后可点击「仅选失败」重试。', 'err');
+        }
+      } else if (track.status === 'done') {
+        consecutiveFailures = 0;
+      }
     }
   });
   try {
