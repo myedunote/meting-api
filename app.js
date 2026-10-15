@@ -1,0 +1,69 @@
+import api from './src/service/api.js'
+import { handler } from './src/template.js'
+import { renderHomepage } from './src/homepage.js'
+import { adminPageHandler } from './src/admin/page.js'
+import adminRoutes from './src/admin/api.js'
+import store from './src/admin/store.js'
+import cookieMonitor from './src/admin/cookie-monitor.js'
+import { Hono } from 'hono'
+import { logger } from 'hono/logger'
+import { cors } from 'hono/cors'
+import config from './src/config.js'
+import { get_runtime, get_url } from './src/util.js'
+import { isQishuiRequestAbort, qishuiAudioResponse } from './src/providers/qishui/audio.js'
+import { apiTokenMiddleware } from './src/middleware/auth.js'
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
+const { version: APP_VERSION } = require('./package.json')
+
+const app = new Hono()
+
+app.use('*', cors())
+app.use('*', logger())
+
+adminRoutes(app)
+
+const getAdminPath = () => {
+    const storedPath = store.getAdminPath()
+    return storedPath || config.ADMIN_PATH
+}
+
+app.use('*', async (c, next) => {
+    const adminPath = getAdminPath()
+    const path = c.req.path
+    
+    if (path === '/' + adminPath || path.startsWith('/' + adminPath + '/')) {
+        return adminPageHandler(c)
+    }
+    
+    await next()
+})
+
+app.get('/api', apiTokenMiddleware, api)
+app.get('/audio/qishui', async (c) => {
+    try {
+        return await qishuiAudioResponse(c)
+    } catch (error) {
+        if (isQishuiRequestAbort(error, c.req.raw?.signal)) {
+            // 浏览器切歌或重新请求 Range 时会主动关闭旧连接，不应伪装成播放失败。
+            return new Response(null, { status: 499 })
+        }
+        console.error('[QishuiAudio]', error?.message || error)
+        return c.json({ error: error?.message || 'qishui audio failed' }, 502)
+    }
+})
+app.get('/test', apiTokenMiddleware, handler)
+app.get('/', (c) => {
+    return c.html(renderHomepage({
+        baseUrl: get_url(c),
+        runtime: get_runtime(),
+        port: config.PORT,
+        overseas: Boolean(config.OVERSEAS),
+        version: APP_VERSION,
+    }))
+})
+
+cookieMonitor.start()
+
+export default app
