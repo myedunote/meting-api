@@ -1,6 +1,8 @@
 import api from './src/service/api.js'
 import { handler } from './src/template.js'
 import { renderHomepage } from './src/homepage.js'
+import { renderBatchPage } from './src/service/batch.js'
+import { audioDownloadHandler } from './src/service/audio-proxy.js'
 import { adminPageHandler } from './src/admin/page.js'
 import adminRoutes from './src/admin/api.js'
 import store from './src/admin/store.js'
@@ -54,6 +56,8 @@ app.get('/audio/qishui', async (c) => {
     }
 })
 app.get('/test', apiTokenMiddleware, handler)
+app.get('/batch', (c) => c.html(renderBatchPage()))
+app.get('/audio/download', apiTokenMiddleware, audioDownloadHandler)
 app.get('/', (c) => {
     return c.html(renderHomepage({
         baseUrl: get_url(c),
